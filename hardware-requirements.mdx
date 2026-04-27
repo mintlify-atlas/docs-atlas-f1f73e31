@@ -1,0 +1,54 @@
+---
+title: "Hardware requirements and model selection"
+description: "GymGuard runs best on NVIDIA CUDA GPUs. Learn which YOLOv8 model variant to pick based on your hardware for optimal FPS and accuracy."
+---
+
+GymGuard uses YOLOv8-Pose for real-time keypoint detection. Performance scales directly with GPU compute — an NVIDIA RTX 3050 delivers smooth 20+ FPS analysis, while CPU-only setups still work at reduced frame rates. Use the tables below to match your hardware to the right configuration.
+
+## Hardware compatibility
+
+| Hardware | FPS | Notes |
+|---|---|---|
+| NVIDIA RTX 3050+ | 20–25 FPS | Recommended |
+| NVIDIA GTX 1060+ | 15–20 FPS | Good |
+| CPU only | 5–8 FPS | Works, not smooth |
+| AMD GPU | 5–8 FPS | Falls back to CPU automatically |
+| Intel integrated | 3–5 FPS | Usable |
+
+## CUDA requirement
+
+GymGuard requires **CUDA 12.x**. Install PyTorch with the `cu121` index URL to match:
+
+```bash
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+```
+
+This wheel is compatible with CUDA 12.1 through 12.x drivers.
+
+## Model selection
+
+GymGuard defaults to `yolov8m-pose.pt` (balanced speed and accuracy). You can swap to a lighter or heavier model based on your GPU.
+
+| Model | Speed | Accuracy | Best for |
+|---|---|---|---|
+| yolov8n-pose.pt | Fastest | Good | CPU / weak GPU |
+| yolov8s-pose.pt | Fast | Better | GTX 1060 class |
+| yolov8m-pose.pt | Balanced | Great | RTX 3050 (default) |
+| yolov8l-pose.pt | Slow | Best | RTX 3080+ |
+| yolov8x-pose.pt | Slowest | Maximum | RTX 4090 |
+
+To change the model, edit line 10 of `pose/detector.py`:
+
+```python
+model = YOLO("yolov8m-pose.pt")  # swap model here
+```
+
+Replace `yolov8m-pose.pt` with whichever variant matches your hardware. Ultralytics downloads the file automatically on first run.
+
+<Tip>
+  `yolov8m-pose.pt` is the recommended default for RTX 3050. It delivers 20–25 FPS with great accuracy and is a good balance for most NVIDIA mid-range GPUs.
+</Tip>
+
+<Note>
+  AMD GPUs fall back to CPU inference automatically — no code change is needed. GymGuard detects available hardware at startup and selects the best available device.
+</Note>

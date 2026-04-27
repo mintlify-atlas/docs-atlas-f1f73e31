@@ -1,0 +1,93 @@
+---
+title: "Lunge: knee-over-toe and torso lean detection rules"
+description: "GymGuard tracks knee position relative to the ankle and shoulder-to-hip alignment during lunges, flagging forward knee drift and lateral torso lean."
+---
+
+When GymGuard detects a lunge, it activates `lunge.analyze()` to check three distinct issues: the front knee drifting excessively forward past the toes on the left side, the same on the right side, and the torso leaning sideways rather than staying upright. These three faults together cover the most common injury vectors in the lunge — patellar tendon overload and compromised balance.
+
+## How lunge detection works
+
+GymGuard classifies your pose as a lunge when your average knee angle (hip–knee–ankle) falls between 120° and 154°. This range sits between the deep bend of a squat (below 120°) and the near-straight legs of a standing position (155° and above). A 12-frame rolling buffer prevents brief knee bends from flickering between squat and lunge classifications.
+
+## Joint angles tracked
+
+| Angle name | Keypoints used | Stored as |
+|---|---|---|
+| Left knee | left_hip → left_knee → left_ankle | `left_knee` |
+| Right knee | right_hip → right_knee → right_ankle | `right_knee` |
+
+```python
+lk_a = angle_between(kp("left_hip"),  lk, la)
+rk_a = angle_between(kp("right_hip"), rk, ra)
+```
+
+## Form issues detected
+
+### Knee over toe
+
+| Issue | Trigger condition | Message |
+|---|---|---|
+| Left Knee Over Toe | `left_knee.x > left_ankle.x + 25` px | Front knee too far forward - patellar tendon stress |
+| Right Knee Over Toe | `right_knee.x > right_ankle.x + 25` px | Front knee too far forward - patellar tendon stress |
+
+GymGuard compares the x-coordinate of your knee to the corresponding ankle. In a front-facing camera view, a knee that has tracked well past the toe appears further forward (larger x in typical image coordinates). The 25 px tolerance is wider than the squat check (15 px) to account for the naturally greater forward knee travel in a lunge.
+
+```python
+if lk and la and lk[0] > la[0] + 25:
+    issues.append({
+        "name": "Left Knee Over Toe",
+        "severity": round(min(1.0, (lk[0] - la[0] - 25) / 50), 2),
+        "message": "Front knee too far forward - patellar tendon stress"
+    })
+if rk and ra and rk[0] > ra[0] + 25:
+    issues.append({
+        "name": "Right Knee Over Toe",
+        "severity": round(min(1.0, (rk[0] - ra[0] - 25) / 50), 2),
+        "message": "Front knee too far forward - patellar tendon stress"
+    })
+```
+
+**Severity formula:** `min(1.0, (knee_x - ankle_x - 25) / 50)` — severity reaches 1.0 when your knee is 75 px past the front edge of your ankle.
+
+<Warning>
+Excessive forward knee travel loads the patellar tendon and anterior knee structures. Combined with heavy load, this can lead to patellar tendinopathy. If GymGuard flags this, step your front foot further forward to reduce knee drift, or shorten your lunge depth until mobility allows a longer stride.
+</Warning>
+
+### Torso lean
+
+| Issue | Trigger condition | Message |
+|---|---|---|
+| Torso Lean | `abs(left_shoulder.x - left_hip.x) > 40` px | Torso leaning - maintain upright posture in lunge |
+
+GymGuard checks whether your left shoulder and left hip have drifted apart horizontally by more than 40 px. A wide separation indicates the torso is pitching or leaning sideways, which shifts load off the legs and compromises balance.
+
+```python
+ls = kp("left_shoulder"); lh = kp("left_hip")
+if ls and lh and abs(ls[0] - lh[0]) > 40:
+    issues.append({
+        "name": "Torso Lean",
+        "severity": round(min(1.0, (abs(ls[0] - lh[0]) - 40) / 60), 2),
+        "message": "Torso leaning - maintain upright posture in lunge"
+    })
+```
+
+**Severity formula:** `min(1.0, (abs_offset - 40) / 60)` — severity reaches 1.0 when the horizontal shoulder-to-hip offset exceeds 100 px.
+
+## Good form vs. flagged form
+
+| What GymGuard sees | State |
+|---|---|
+| Knee within 25 px of ankle x | No flag — knee tracking safely |
+| Knee 25–75 px past ankle x | Knee Over Toe flagged — severity scaling |
+| Knee 75+ px past ankle x | Severity 1.0 — HIGH RISK |
+| Shoulder-hip offset ≤ 40 px | No flag — torso upright |
+| Shoulder-hip offset 40–100 px | Torso Lean flagged — severity scaling |
+| Shoulder-hip offset 100+ px | Severity 1.0 — significant lean |
+
+<Note>
+Some forward knee travel in a lunge is normal and unavoidable — the goal is not to have zero forward movement, but to keep the knee from traveling so far that it places acute stress on the tendon. The 25 px tolerance reflects this.
+</Note>
+
+<Tip>
+Focus on a tall spine and level hips throughout the lunge. Looking at a fixed point straight ahead helps keep the torso upright. If your torso tends to lean, it often indicates the step length is too short — try lengthening your stride.
+</Tip>

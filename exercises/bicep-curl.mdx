@@ -1,0 +1,71 @@
+---
+title: "Bicep curl: body swing and momentum cheat rep rules"
+description: "GymGuard measures the horizontal offset between your hips and shoulders to detect body swing during bicep curls, flagging momentum-driven cheat reps."
+---
+
+When GymGuard detects a bicep curl, it activates `curl.analyze()` to watch for body swing — the most common form fault in curls. Body swing happens when you rock your torso backward to help the weight up, reducing bicep activation and loading the lower back. GymGuard measures this by comparing how far your hips have shifted forward relative to your shoulders, and flags it when the gap exceeds the expected upright stance.
+
+## How bicep curl detection works
+
+GymGuard classifies your pose as a bicep curl when your average elbow angle (shoulder–elbow–wrist) falls below 100° and your wrists are not raised above your shoulders. This distinguishes the arm-dominant curl from the overhead press, which also has a low elbow angle but with wrists elevated. A 12-frame rolling buffer stabilizes the classification across reps.
+
+## Joint angles tracked
+
+| Angle name | Keypoints used | Stored as |
+|---|---|---|
+| Left curl | left_shoulder → left_elbow → left_wrist | `left_curl` |
+| Right curl | right_shoulder → right_elbow → right_wrist | `right_curl` |
+
+```python
+l_curl = angle_between(ls, le, lw)
+r_curl = angle_between(rs, re, rw)
+```
+
+These angles track the flexion of each arm through the range of motion and are displayed on the dashboard, but the body swing check is positional rather than angle-based.
+
+## Form issues detected
+
+### Body swing
+
+| Issue | Trigger condition | Message |
+|---|---|---|
+| Body Swing | Average hip-ahead-of-shoulder > 30 px | Using momentum - reduces bicep activation |
+
+GymGuard averages the horizontal hip-minus-shoulder offset across both sides. When your hips are forward of your shoulders by more than 30 px on average, it indicates your pelvis is swinging to assist the lift rather than your biceps doing the work.
+
+```python
+if ls and lh and rs and rh:
+    avg_lean = ((lh[0] - ls[0]) + (rh[0] - rs[0])) / 2
+    if avg_lean > 30:
+        issues.append({
+            "name": "Body Swing",
+            "severity": round(min(1.0, (avg_lean - 30) / 60), 2),
+            "message": "Using momentum - reduces bicep activation"
+        })
+```
+
+**Severity formula:** `min(1.0, (avg_lean - 30) / 60)` — severity reaches 1.0 when the average hip-forward offset hits 90 px, indicating an aggressive swing.
+
+## Good form vs. flagged form
+
+| What GymGuard sees | State |
+|---|---|
+| Avg hip-shoulder offset ≤ 30 px | No flag — torso stable |
+| Avg hip-shoulder offset 30–90 px | Body Swing flagged — severity scales with lean |
+| Avg hip-shoulder offset ≥ 90 px | Severity 1.0 — significant momentum use |
+
+<Warning>
+Heavy body swing during curls concentrates shear force on the lumbar spine at the moment of peak load — typically near the bottom of the eccentric phase. If GymGuard flags Body Swing consistently, reduce the weight until you can complete full reps without rocking.
+</Warning>
+
+## Why this matters
+
+The primary goal of a bicep curl is to isolate elbow flexion under load. When you swing the torso, your posterior chain contributes to the lift, the peak tension on the bicep drops, and your lower back absorbs compressive and shear forces it was not designed to handle repetitively. GymGuard's body swing check catches this even when individual arm angles look correct frame by frame.
+
+<Note>
+Standing with your back against a wall is a reliable drill to train out body swing. It physically prevents your torso from rocking backward and forces the bicep to do the full work of each rep.
+</Note>
+
+<Tip>
+Anchor your elbows to the sides of your torso and keep them stationary throughout the full range of motion. If your elbows drift forward at the top, it is a sign the weight is too heavy or you are compensating with the front deltoid rather than the bicep.
+</Tip>

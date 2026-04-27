@@ -1,0 +1,116 @@
+---
+title: "The GymGuard inference pipeline"
+description: "Follow each stage of GymGuard's pipeline: webcam capture, YOLOv8 GPU inference, exercise classification, posture analysis, risk scoring, and WebSocket delivery."
+---
+
+Every frame you send to GymGuard travels through a fixed sequence of stages before the risk score and skeleton overlay appear in your browser. Understanding that sequence helps you tune performance, debug unexpected detections, and reason about latency.
+
+<Steps>
+  <Step title="Webcam or video capture">
+    GymGuard opens your camera via OpenCV and configures it to 640×480 at a 30 FPS target:
+
+    ```python
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+    cap.set(cv2.CAP_PROP_FPS, 30)
+    ```
+
+    In video upload mode, OpenCV reads frames from the uploaded file instead of a device index. Both paths produce the same 640×480 NumPy array that the rest of the pipeline consumes.
+  </Step>
+
+  <Step title="Frame-skip and YOLOv8m-Pose GPU inference">
+    Running full inference on every frame would saturate the GPU and add latency. GymGuard skips frames using a simple modulo check before calling the model:
+
+    - **Live webcam** — runs inference on every **even** frame (`frame_idx % 2 == 0`)
+    - **Video upload** — runs inference on every **third** frame (`frame_idx % 3 != 0` skips the rest)
+
+    When inference does run, `run_inference()` calls YOLOv8m-Pose with a confidence threshold of 0.25:
+
+    ```python
+    results = model(frame, verbose=False, device=DEVICE, conf=0.25)
+    ```
+
+    The model runs on CUDA if an NVIDIA GPU is detected at startup; otherwise it falls back to CPU automatically.
+
+    <Note>
+      On skipped frames, GymGuard reuses the most recent analysis result and keypoints so the skeleton overlay stays visible without a stale gap.
+    </Note>
+  </Step>
+
+  <Step title="17 keypoint extraction and largest-person selection">
+    YOLO returns one keypoint set per detected person. When the frame contains multiple people, GymGuard picks the subject with the largest bounding-box area — treated as the main person in frame:
+
+    ```python
+    areas = []
+    for box in boxes.xyxy:
+        w = float(box[2]) - float(box[0])
+        h = float(box[3]) - float(box[1])
+        areas.append(w * h)
+
+    best_idx = areas.index(max(areas))
+    return kps[best_idx].cpu().numpy()
+    ```
+
+    The result is a `(17, 3)` NumPy array — one row per COCO keypoint, three columns for `x`, `y`, and confidence.
+  </Step>
+
+  <Step title="Keypoint normalization and ML exercise classification">
+    The 17 `(x, y)` pairs are flattened into 34 floats, normalized by frame dimensions so the classifier is resolution-independent:
+
+    ```python
+    flat = []
+    for k in keypoints_raw:
+        flat.append(float(k[0]) / 640)
+        flat.append(float(k[1]) / 480)
+    ```
+
+    The `MLPClassifier` returns a probability distribution over the seven supported exercises. If the top prediction exceeds 0.6 confidence, it is accepted. Otherwise the pipeline falls back to heuristic rules. Both paths feed a rolling buffer of 12 predictions; the buffer's mode becomes the active exercise label.
+  </Step>
+
+  <Step title="Exercise-specific posture analysis">
+    Once an exercise is identified, `analyze_posture()` routes to the matching analyzer module — `squat`, `deadlift`, `bench`, `lunge`, `curl`, or `overhead`. Each analyzer computes the joint angles relevant to that movement and appends issue objects to a shared list:
+
+    ```python
+    issues.append({
+        "name": "Forward Head Posture",
+        "severity": 0.45,
+        "message": "Head too far forward - cervical spine strain risk"
+    })
+    ```
+
+    `severity` is a float from 0.0 to 1.0 that reflects how far the joint angle deviates from safe form.
+  </Step>
+
+  <Step title="Risk score computation">
+    After all issues are collected, a single integer risk score is computed from the worst-severity issue and the total issue count:
+
+    ```python
+    risk_score = int(min(100, max([i["severity"] for i in issues]) * 70 + len(issues) * 10)) if issues else 0
+    ```
+
+    The score is clamped to `[0, 100]`. A frame with no issues always scores 0.
+  </Step>
+
+  <Step title="FastAPI WebSocket or HTTP streaming to the browser">
+    For live webcam sessions, the annotated frame and analysis JSON are sent over a WebSocket connection as a single message per frame:
+
+    ```json
+    {
+      "frame": "<base64-encoded JPEG>",
+      "analysis": {
+        "risk_score": 42,
+        "exercise_detected": "Squat",
+        "issues": [...],
+        "angles": {...}
+      },
+      "ts": 1714000000.0
+    }
+    ```
+
+    For video uploads, the same payload is streamed as newline-delimited JSON (`application/x-ndjson`) over an HTTP `POST /analyze-video` response. The browser dashboard renders the skeleton overlay onto a `<canvas>` element, updates the risk gauge, and triggers voice alerts via the Web Speech API.
+  </Step>
+</Steps>
+
+<Tip>
+  To improve throughput on slower hardware, swap `yolov8m-pose.pt` for `yolov8n-pose.pt` or `yolov8s-pose.pt` in `pose/detector.py`. See the model options table in the README for a speed/accuracy comparison.
+</Tip>

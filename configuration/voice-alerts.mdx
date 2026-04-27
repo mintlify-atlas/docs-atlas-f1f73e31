@@ -1,0 +1,87 @@
+---
+title: "Voice alerts and form feedback"
+description: "GymGuard uses the browser's Web Speech API to announce form issues out loud. Learn how risk thresholds, alert text, and the 5-second cooldown work."
+---
+
+GymGuard speaks out loud when it detects form issues so you can stay focused on your workout without glancing at the screen. Voice alerts are powered entirely by the browser's built-in Web Speech API — no microphone access, no external libraries, and no API keys required.
+
+## How voice alerts work
+
+Every frame, GymGuard receives a risk score (0–100) and a list of detected form issues. The `updateAlert` function in `static/js/ui.js` checks the score and triggers the appropriate alert:
+
+- At **HIGH RISK** (score ≥ 65): the browser speaks `"Warning. [Issue name]. [Full message]"`
+- At **WARNING** (score 30–64): the browser speaks `"Check your form. [Issue name]"`
+- At **SAFE** (score < 30): the alert is silent and any pending speech is cleared
+
+## Alert levels
+
+| Risk Level | Score Range | What Is Said |
+|---|---|---|
+| SAFE | 0–29 | Silent |
+| WARNING | 30–64 | `"Check your form. [Issue name]"` |
+| HIGH RISK | 65–100 | `"Warning. [Issue name]. [Full message]"` |
+
+Only the highest-priority issue (the first entry in the issues list) is spoken per alert. This keeps alerts focused and avoids overwhelming you with multiple simultaneous messages.
+
+## Cooldown between alerts
+
+To prevent the same message from repeating every frame, GymGuard enforces a **5-second cooldown** per unique message. If the same issue fires continuously, you will hear it at most once every 5 seconds. The cooldown resets when the alert message changes — for example, when you correct one issue and a different one appears.
+
+The cooldown logic from `static/js/ui.js`:
+
+```javascript
+function speak(msg) {
+  var now = Date.now();
+  if (msg === _lastSpoken && now - _lastSpokenAt < 5000) return;
+  _lastSpoken   = msg;
+  _lastSpokenAt = now;
+  var utterance    = new SpeechSynthesisUtterance(msg);
+  utterance.rate   = 1;
+  utterance.volume = 1;
+  utterance.pitch  = 1;
+  window.speechSynthesis.cancel();
+  window.speechSynthesis.speak(utterance);
+}
+```
+
+## Browser compatibility
+
+Voice alerts work in the following browsers:
+
+| Browser | Supported |
+|---|---|
+| Chrome | Yes |
+| Edge | Yes |
+| Firefox | Yes |
+| Safari | Partial (may require user interaction to unlock audio) |
+
+<Note>
+  Voice alerts require no API keys, no external libraries, and no server-side audio processing. Everything runs in the browser using the native `window.speechSynthesis` interface.
+</Note>
+
+## Troubleshooting
+
+**Voice alerts are silent:**
+
+<Steps>
+  <Step title="Check that your browser tab is not muted">
+    Right-click the browser tab and confirm audio is enabled. Some browsers mute tabs by default if they have played audio recently.
+  </Step>
+  <Step title="Interact with the page before starting">
+    Browsers require at least one user interaction (a click or keypress) before allowing speech synthesis. Click "START ANALYSIS" to begin your session — this counts as the required interaction.
+  </Step>
+  <Step title="Check your system volume and output device">
+    Confirm your system volume is turned up and the correct audio output device is selected.
+  </Step>
+  <Step title="Try Chrome or Edge">
+    If you are using Firefox and alerts are unreliable, switch to Chrome or Edge, which have the most consistent Web Speech API implementations.
+  </Step>
+</Steps>
+
+**Alerts are repeating too frequently:**
+
+The 5-second cooldown only suppresses identical messages. If the issue name or message text changes slightly between frames, the cooldown resets. This is expected behavior — it means GymGuard is detecting a changing form issue.
+
+**Voice is too fast or too slow:**
+
+GymGuard uses default `rate`, `volume`, and `pitch` values (all set to `1`). You can adjust these in `static/js/ui.js` inside the `speak` function to suit your preference.

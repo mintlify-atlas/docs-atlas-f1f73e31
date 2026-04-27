@@ -1,0 +1,137 @@
+---
+title: "Collecting training data for exercise classification"
+description: "Record exercise videos or use the live webcam collector to build the keypoint dataset that trains your GymGuard exercise classifier."
+---
+
+Before you can train the exercise classifier, you need a keypoint dataset. GymGuard provides two ways to build it: record video files and extract keypoints in bulk with `extract_from_videos.py`, or capture keypoints live from your webcam with `collect_data.py`. Both methods append rows to `data/keypoints.csv` in the same format, so you can combine them freely. The video method is convenient if you already have footage; the webcam method is faster for collecting fresh samples interactively.
+
+## Method 1: Record videos and extract keypoints
+
+Record one or more video files for each exercise, place them in the correct subfolder, then run the extractor. Videos can be `.mp4` or `.webm`.
+
+### Video directory structure
+
+Create the following folders under `data/videos/` and place your recordings inside them:
+
+```
+data/
+└── videos/
+    ├── squat/
+    ├── deadlift/
+    ├── bench/
+    ├── lunge/
+    ├── curl/
+    ├── overhead/
+    └── standing/
+```
+
+The folder name determines the label that gets written to `keypoints.csv`. The extractor maps folder names to display labels using the following mapping from `extract_from_videos.py`:
+
+```python
+LABEL_MAP = {
+    "squat":    "Squat",
+    "deadlift": "Deadlift",
+    "bench":    "Bench Press",
+    "lunge":    "Lunge",
+    "curl":     "Bicep Curl",
+    "overhead": "Overhead Press",
+    "standing": "Standing",
+}
+```
+
+### Run the extractor
+
+```bash
+python tools/extract_from_videos.py
+```
+
+The extractor processes every video in each subfolder. It samples one frame every 10 frames (`FRAME_SKIP = 10`) to reduce near-duplicate keypoint rows. For each sampled frame where a person is detected, it normalizes the 17 keypoints to the frame's width and height and writes a row to `data/keypoints.csv`.
+
+The full extraction loop from `extract_from_videos.py`:
+
+```python
+for exercise_folder in EXERCISES:
+    folder = VIDEO_DIR / exercise_folder
+    label  = LABEL_MAP[exercise_folder]
+
+    if not folder.exists():
+        print(f"Skipping {exercise_folder} - folder not found")
+        continue
+
+    videos = list(folder.glob("*.mp4")) + list(folder.glob("*.webm"))
+    if not videos:
+        print(f"Skipping {exercise_folder} - no videos found")
+        continue
+
+    print(f"\nProcessing: {label} ({len(videos)} videos)")
+
+    exercise_total = 0
+    for video in videos:
+        print(f"  -> {video.name}")
+        saved = process_video(video, label, writer)
+        exercise_total += saved
+        print(f"     Saved {saved} samples")
+```
+
+The extractor overwrites `keypoints.csv` on each run. If you want to add to an existing dataset, use the webcam collector in Method 2 instead, which appends rows.
+
+## Method 2: Live webcam collection
+
+The webcam collector opens your camera, runs YOLOv8 pose estimation in real time, and writes keypoint rows directly to `data/keypoints.csv` while you perform the exercise in front of the camera.
+
+### Run the collector
+
+```bash
+python tools/collect_data.py
+```
+
+When you start the script, it lists the seven available exercises and prompts you to pick one and set a target sample count:
+
+```python
+EXERCISES = [
+    "Squat",
+    "Deadlift",
+    "Bench Press",
+    "Lunge",
+    "Bicep Curl",
+    "Overhead Press",
+    "Standing",
+]
+```
+
+After you choose, a camera window opens. Press **Space** to start collecting and **Q** to quit early. The collector runs inference every other frame and normalizes keypoints to 640×480:
+
+```python
+def normalize_keypoints(kps, frame_w, frame_h):
+    """Normalize keypoints to 0-1 relative to frame size"""
+    flat = []
+    for kp in kps:
+        flat.append(float(kp[0]) / frame_w)
+        flat.append(float(kp[1]) / frame_h)
+    return flat
+```
+
+The collector appends to `data/keypoints.csv` if the file already exists, preserving any samples you collected earlier. Run it once per exercise class.
+
+## What the CSV contains
+
+Both methods write to `data/keypoints.csv`. Each row contains 34 normalized coordinate values (x and y for each of the 17 keypoints) plus a label column:
+
+| Columns | Format |
+|---|---|
+| `kp0_x`, `kp0_y` … `kp16_x`, `kp16_y` | Float, 0.0–1.0 relative to frame size |
+| `label` | Exercise name string (e.g., `"Squat"`) |
+
+<Tip>
+Film from the side at roughly arm's length. A full side view gives the classifier the clearest signal for spine angle, knee bend, and arm position. Keep lighting consistent across all exercises — avoid strong backlighting. Collect at least 300 samples per exercise (the webcam collector suggests this as a minimum). For video extraction, aim for 1–2 minutes of footage per exercise class.
+</Tip>
+
+## Next step
+
+Once you have `data/keypoints.csv` with samples for all seven exercises, train the classifier:
+
+```bash
+python tools/train_classifier.py
+```
+
+See [Training and evaluating the exercise classifier](/training/train-and-evaluate) for the full training walkthrough.

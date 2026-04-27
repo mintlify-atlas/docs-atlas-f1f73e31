@@ -1,0 +1,61 @@
+---
+title: "GymGuard: Real-Time AI Injury Prevention"
+description: "GymGuard uses YOLOv8 and GPU-accelerated pose estimation to track your form live, score injury risk 0–100, and alert you before bad reps cause injuries."
+---
+
+GymGuard watches your workout through your webcam, tracks 17 body keypoints in real time using YOLOv8-Pose on your GPU, and scores your injury risk from 0 to 100 — every frame, every rep. It detects bad form before it becomes an injury, speaks out loud when something's wrong, and logs your session history so you can track improvement over time.
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Install GymGuard and start your first live analysis session in minutes
+  </Card>
+  <Card title="Hardware Requirements" icon="microchip" href="/hardware-requirements">
+    Check GPU, CUDA, and webcam compatibility before you install
+  </Card>
+  <Card title="How It Works" icon="brain" href="/concepts/pipeline">
+    Understand the pose estimation pipeline from webcam to risk score
+  </Card>
+  <Card title="Exercises" icon="dumbbell" href="/exercises/overview">
+    See all 7 supported exercises and what form rules GymGuard enforces
+  </Card>
+  <Card title="Train Your Classifier" icon="graduation-cap" href="/training/overview">
+    Record your own data and train a personalized exercise classifier
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/websocket">
+    Integrate GymGuard's WebSocket stream and REST endpoints into your own app
+  </Card>
+</CardGroup>
+
+## What GymGuard does
+
+GymGuard is a GPU-accelerated fitness form coach that runs locally on your machine. Point your webcam at yourself, open your browser to `http://localhost:8000`, and GymGuard:
+
+1. Detects and tracks 17 body keypoints at 20+ FPS using YOLOv8m-Pose
+2. Automatically identifies which exercise you are performing (98% accuracy across 7 exercises)
+3. Calculates joint angles and applies exercise-specific form rules
+4. Scores your injury risk from 0 (safe) to 100 (stop immediately)
+5. Speaks voice alerts through your browser when form breaks down
+
+<CardGroup cols={3}>
+  <Card title="20+ FPS" icon="gauge-high">
+    Real-time pose estimation on NVIDIA GPU — no lag, no delay
+  </Card>
+  <Card title="7 exercises" icon="list-check">
+    Squat, Deadlift, Bench, Lunge, Curl, Overhead Press, Standing
+  </Card>
+  <Card title="0–100 risk score" icon="shield-halved">
+    Instant injury risk score updated every frame based on joint angles
+  </Card>
+</CardGroup>
+
+## Risk levels at a glance
+
+| Score | Level | What it means |
+|---|---|---|
+| 0–29 | SAFE | Good form — keep going |
+| 30–64 | WARNING | Deviations detected — reduce load |
+| 65–100 | HIGH RISK | Stop and correct immediately |
+
+<Note>
+GymGuard requires Python 3.11+ and a webcam. An NVIDIA GPU with CUDA support is strongly recommended for smooth real-time performance. CPU-only mode works but runs at 5–8 FPS.
+</Note>

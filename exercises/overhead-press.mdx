@@ -1,0 +1,75 @@
+---
+title: "Overhead press: lumbar hyperextension detection rules"
+description: "GymGuard monitors spine angle during overhead press and flags lumbar hyperextension when your spine exceeds 175 degrees, signaling disc compression risk."
+---
+
+When GymGuard detects an overhead press, it activates `overhead.analyze()` with your live spine angle from the shared posture pipeline. The analyzer watches for lumbar hyperextension — the characteristic backward arch that lifters develop when pressing heavy weight overhead without adequate core bracing or shoulder mobility. Unlike most form faults that involve joints bending too much, this one flags a spine that is extending beyond neutral into a compressed, loaded arc.
+
+## How overhead press detection works
+
+GymGuard classifies your pose as an overhead press when your wrists are above your shoulder height in the frame and your average elbow angle (shoulder–elbow–wrist) is below 130°. This combination catches the pressing phase where the bar is moving through or above head height. A 12-frame rolling buffer smooths the label across the bottom of the lift where wrist height briefly drops.
+
+## Joint angles tracked
+
+| Angle name | Keypoints used | Stored as |
+|---|---|---|
+| Left elbow | left_shoulder → left_elbow → left_wrist | `left_elbow` |
+| Right elbow | right_shoulder → right_elbow → right_wrist | `right_elbow` |
+| Spine | left_shoulder → left_hip → left_knee (or right side) | `spine` |
+
+```python
+l = angle_between(ls, le, lw)
+r = angle_between(rs, re, rw)
+```
+
+The spine angle is calculated in `base.py` and passed directly into `overhead.analyze()`:
+
+```python
+spine_angle = (angle_between(kp("left_shoulder"),  kp("left_hip"),  kp("left_knee")) or
+               angle_between(kp("right_shoulder"), kp("right_hip"), kp("right_knee")))
+```
+
+## Form issues detected
+
+### Lumbar hyperextension
+
+| Issue | Trigger condition | Message |
+|---|---|---|
+| Lumbar Hyperextension | `spine_angle > 175°` | Lower back arching - disc compression risk |
+
+A spine angle above 175° means the shoulder–hip–knee chain has opened past a straight line into a backward arc, indicating your lumbar spine is hyperextended under the overhead load.
+
+```python
+if spine_angle and spine_angle > 175:
+    issues.append({
+        "name": "Lumbar Hyperextension",
+        "severity": round(min(1.0, (spine_angle - 175) / 15), 2),
+        "message": "Lower back arching - disc compression risk"
+    })
+```
+
+**Severity formula:** `min(1.0, (spine_angle - 175) / 15)` — severity reaches 1.0 at a spine angle of 190°. Note that this range is narrow (only 15°) compared to other checks, reflecting how quickly hyperextension goes from mild to serious under overhead load.
+
+<Warning>
+Lumbar hyperextension during an overhead press compresses the posterior elements of the lumbar spine — facet joints and disc annuli — while simultaneously stretching the anterior spinal ligaments. Under significant load this is a mechanism for disc herniation and facet syndrome. If GymGuard flags this, brace your core hard before pressing and consider reducing load until bracing is consistent.
+</Warning>
+
+## Good form vs. flagged form
+
+| What GymGuard sees | State |
+|---|---|
+| Spine angle ≤ 175° | No flag — spine in neutral to slight extension |
+| Spine angle 175–190° | Lumbar Hyperextension flagged — severity scales |
+| Spine angle ≥ 190° | Severity 1.0 — significant hyperextension |
+
+## Why the threshold is 175°, not 180°
+
+A perfectly neutral standing spine is not a straight 180° line — the lumbar lordosis means a healthy standing posture measures slightly above 180° when modeled through the shoulder–hip–knee landmarks. GymGuard sets the threshold at 175° to account for this, only flagging the posture when the lumbar arch becomes excessive rather than natural.
+
+<Note>
+Limited shoulder mobility is the most common root cause of lumbar hyperextension in the overhead press. When the bar cannot travel in a vertical line directly over your center of mass, the torso compensates by arching backward. Improving thoracic mobility and shoulder flexion range of motion reduces the compensation significantly.
+</Note>
+
+<Tip>
+Brace your core before every press rep as if you are about to take a punch to the stomach. Squeeze your glutes at the same time. This "double brace" technique locks the pelvis in a neutral position and prevents the lower back from arching as you drive the bar overhead.
+</Tip>

@@ -1,0 +1,59 @@
+---
+title: "Injury risk scoring: 0 to 100"
+description: "GymGuard computes a 0–100 risk score each frame from issue severity and count, mapping the result to SAFE, WARNING, or HIGH RISK bands with voice alerts."
+---
+
+GymGuard reduces all detected form issues for a single frame into one number between 0 and 100. A score of 0 means no problems were found. A score of 100 means the posture deviation is severe enough that continuing the set risks injury. The dashboard displays this score on a live gauge and triggers a voice alert whenever the score crosses into a warning band.
+
+## The scoring formula
+
+The risk score is computed in `pose/analyzers/base.py` immediately after all exercise-specific checks run:
+
+```python
+risk_score = int(min(100, max([i["severity"] for i in issues]) * 70 + len(issues) * 10)) if issues else 0
+```
+
+Breaking this down:
+
+- **`max([i["severity"] for i in issues]) * 70`** — takes the worst single issue and scales it to a maximum of 70 points. A perfectly severe issue (severity = 1.0) contributes 70 points on its own.
+- **`len(issues) * 10`** — adds 10 points per additional issue detected. Multiple simultaneous problems compound the score.
+- **`min(100, ...)`** — clamps the result so the score never exceeds 100.
+- **`if issues else 0`** — a frame with no issues always scores exactly 0.
+
+## Severity: the per-issue building block
+
+Every issue object carries a `severity` float in `[0.0, 1.0]` that represents how far the measured angle deviates from the safe range. Analyzers compute severity proportionally to the deviation magnitude. For example, forward head posture severity grows linearly with how far the nose drifts past the 45-pixel threshold:
+
+```python
+"severity": round(min(1.0, (abs(offset) - 45) / 80), 2)
+```
+
+A severity of 0.0 sits exactly at the safe boundary. A severity of 1.0 means the deviation is at or beyond the maximum expected unsafe range.
+
+## Risk bands
+
+| Score | Level | Meaning |
+|---|---|---|
+| 0–29 | SAFE | Form is within acceptable limits |
+| 30–64 | WARNING | Deviations detected — reduce load or adjust position |
+| 65–100 | HIGH RISK | Stop the set and correct form immediately |
+
+## Voice alerts
+
+GymGuard uses the browser's native Web Speech API to announce issues out loud so you do not need to glance at the screen mid-rep. The alert message varies by band:
+
+| Band | Voice alert |
+|---|---|
+| WARNING (30–64) | "Check your form. [Issue name]" |
+| HIGH RISK (65–100) | "Warning. [Issue name]. [Full message]" |
+| SAFE (0–29) | Silent — no alert |
+
+A **5-second cooldown** prevents the same alert from repeating every frame. After an alert fires, the browser suppresses the next alert for that session until the cooldown expires.
+
+<Note>
+  Voice alerts require a browser that supports the Web Speech API. Chrome, Edge, and Firefox all support it. Safari has partial support — alerts may not fire on all Safari versions.
+</Note>
+
+<Tip>
+  If you find the WARNING threshold too sensitive during warm-up sets, note that the score is driven primarily by `severity`. Improving the single worst joint position — rather than fixing all issues at once — drops the score fastest because the `max()` term dominates the formula.
+</Tip>

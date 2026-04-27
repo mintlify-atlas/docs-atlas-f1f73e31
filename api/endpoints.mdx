@@ -1,0 +1,191 @@
+---
+title: "REST API: analyze images and videos for pose results"
+description: "POST /analyze-image returns an annotated frame and pose analysis for one image. POST /analyze-video streams NDJSON pose results across a full video file."
+---
+
+GymGuard exposes two REST endpoints for analyzing pre-recorded media. Use `POST /analyze-image` to get instant pose analysis for a single still image, and `POST /analyze-video` to process a full workout video as a streaming response — useful for reviewing recorded sessions without a live webcam connection.
+
+Both endpoints accept `multipart/form-data` with a single `file` field, run YOLOv8 pose inference, and return the same analysis structure as the WebSocket stream.
+
+## Shared analysis object
+
+Both endpoints return an `analysis` object with the same shape. The fields are documented here once and referenced by both endpoint sections below.
+
+<ResponseField name="exercise_detected" type="string">
+  The exercise GymGuard identified. Possible values: `"Squat"`, `"Deadlift"`, `"Bench Press"`, `"Lunge"`, `"Bicep Curl"`, `"Overhead Press"`, `"Standing"`, `"No person detected"`.
+</ResponseField>
+
+<ResponseField name="risk_score" type="integer">
+  Injury risk score from `0` (safe) to `100` (high risk). Computed as `min(100, max_severity × 70 + issue_count × 10)`. Returns `0` when no issues are detected.
+</ResponseField>
+
+<ResponseField name="issues" type="array">
+  Active form issues detected in the frame. Empty when form is correct or no person is visible.
+
+  <Expandable title="issue object fields">
+    <ResponseField name="name" type="string">
+      Short label for the issue, for example `"Excessive Forward Lean"` or `"Forward Head Posture"`.
+    </ResponseField>
+    <ResponseField name="severity" type="number">
+      Severity on a `0.0`–`1.0` scale. Used to compute `risk_score`.
+    </ResponseField>
+    <ResponseField name="message" type="string">
+      Human-readable description of the problem and associated injury risk.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="angles" type="object">
+  Dictionary of computed joint angles in degrees, keyed by joint name. Common keys: `spine`, `left_knee`, `right_knee`, `neck_offset`. Values are rounded to one decimal place. Only joints visible in the frame are included.
+</ResponseField>
+
+---
+
+## POST /analyze-image
+
+Accepts a single image file, runs pose inference on it, draws the skeleton overlay, and returns the annotated frame with a full analysis object.
+
+### Request
+
+**Content-Type:** `multipart/form-data`
+
+<ParamField body="file" type="file" required>
+  The image file to analyze. Accepts any format OpenCV can decode, including JPEG, PNG, and BMP. The file must contain at least one visible person for pose detection to succeed.
+</ParamField>
+
+### Response
+
+Returns `application/json`.
+
+```json
+{
+  "frame": "<base64-encoded JPEG string>",
+  "analysis": {
+    "exercise_detected": "Deadlift",
+    "risk_score": 58,
+    "issues": [
+      {
+        "name": "Spine Rounding",
+        "severity": 0.62,
+        "message": "Back rounding - serious lower back injury risk"
+      }
+    ],
+    "angles": {
+      "spine": 131.4,
+      "left_knee": 148.2,
+      "right_knee": 150.6,
+      "neck_offset": -3.0
+    }
+  }
+}
+```
+
+<ResponseField name="frame" type="string">
+  Base64-encoded JPEG of the input image with the skeleton overlay drawn. Render with the prefix `data:image/jpeg;base64,`.
+</ResponseField>
+
+<ResponseField name="analysis" type="object">
+  Pose analysis result. See [shared analysis object](#shared-analysis-object) for field definitions. When no person is detected, `exercise_detected` is `"No person detected"`, `risk_score` is `0`, and `issues` is empty.
+</ResponseField>
+
+### curl example
+
+```bash
+curl -X POST http://localhost:8000/analyze-image \
+  -F "file=@/path/to/your/image.jpg" \
+  | python3 -m json.tool
+```
+
+To save the annotated frame from the response:
+
+```bash
+curl -s -X POST http://localhost:8000/analyze-image \
+  -F "file=@/path/to/your/image.jpg" \
+  | python3 -c "
+import sys, json, base64
+data = json.load(sys.stdin)
+with open('annotated.jpg', 'wb') as f:
+    f.write(base64.b64decode(data['frame']))
+print('Risk score:', data['analysis']['risk_score'])
+"
+```
+
+<Note>
+The image is encoded at 95% JPEG quality in the response. This is higher than the WebSocket stream (80%) to preserve detail for still-image analysis.
+</Note>
+
+---
+
+## POST /analyze-video
+
+Accepts a video file and returns a streaming NDJSON response — one JSON object per line for every third frame processed. This lets you start reading results before the full video has been analyzed.
+
+### Request
+
+**Content-Type:** `multipart/form-data`
+
+<ParamField body="file" type="file" required>
+  The video file to analyze. Accepts any container format OpenCV can open, including MP4, AVI, MOV, and MKV. The original filename's extension is used to create the temporary file on disk.
+</ParamField>
+
+### Response
+
+**Content-Type:** `application/x-ndjson`
+
+The response body is a stream of newline-delimited JSON objects. Each line is one processed frame and can be parsed independently as it arrives. GymGuard processes every third frame of the video to balance throughput and coverage.
+
+Each line has the same shape:
+
+```json
+{"frame": "<base64-encoded JPEG string>", "analysis": {"exercise_detected": "Squat", "risk_score": 31, "issues": [...], "angles": {...}}}
+```
+
+<ResponseField name="frame" type="string">
+  Base64-encoded JPEG of the processed frame with skeleton overlay. Encoded at 80% JPEG quality.
+</ResponseField>
+
+<ResponseField name="analysis" type="object">
+  Pose analysis result for this frame. See [shared analysis object](#shared-analysis-object) for field definitions.
+</ResponseField>
+
+<Warning>
+Every third frame is processed — frames 3, 6, 9, and so on. Frames 1, 2, 4, 5, etc. are skipped. For a 30 FPS video you will receive roughly 10 result lines per second of footage.
+</Warning>
+
+### curl example
+
+Stream results as they arrive:
+
+```bash
+curl -N -X POST http://localhost:8000/analyze-video \
+  -F "file=@/path/to/workout.mp4"
+```
+
+Parse each line as it streams using Python:
+
+```python
+import requests
+import json
+
+with open("/path/to/workout.mp4", "rb") as f:
+    response = requests.post(
+        "http://localhost:8000/analyze-video",
+        files={"file": f},
+        stream=True,
+    )
+
+for line in response.iter_lines():
+    if not line:
+        continue
+    data = json.loads(line)
+    analysis = data["analysis"]
+    print(
+        f"Exercise: {analysis['exercise_detected']}, "
+        f"Risk: {analysis['risk_score']}, "
+        f"Issues: {len(analysis['issues'])}"
+    )
+```
+
+<Tip>
+Because the response streams frame-by-frame, you can update a UI in real time as the video is processed — the same way the built-in GymGuard dashboard handles video upload mode.
+</Tip>

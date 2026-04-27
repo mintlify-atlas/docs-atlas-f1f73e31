@@ -1,0 +1,92 @@
+---
+title: "Pose estimation with YOLOv8-Pose"
+description: "How GymGuard uses YOLOv8m-Pose to detect 17 COCO keypoints, filter by confidence, compute joint angles, and select the main subject in multi-person frames."
+---
+
+GymGuard's entire analysis chain starts with a single number per joint: confidence. YOLOv8m-Pose assigns an `(x, y, confidence)` triple to each of the 17 COCO keypoints it detects. Every downstream calculation — angle math, exercise detection, risk scoring — depends on those coordinates being trustworthy, so the pipeline discards any keypoint whose confidence falls below the threshold before any geometry is computed.
+
+## The 17 COCO keypoints
+
+YOLOv8-Pose outputs keypoints in a fixed order defined by the COCO skeleton standard. GymGuard maps each index to a human-readable name in `pose/utils.py`:
+
+| Index | Name            | Index | Name           |
+|-------|-----------------|-------|----------------|
+| 0     | nose            | 9     | left_wrist     |
+| 1     | left_eye        | 10    | right_wrist    |
+| 2     | right_eye       | 11    | left_hip       |
+| 3     | left_ear        | 12    | right_hip      |
+| 4     | right_ear       | 13    | left_knee      |
+| 5     | left_shoulder   | 14    | right_knee     |
+| 6     | right_shoulder  | 15    | left_ankle     |
+| 7     | left_elbow      | 16    | right_ankle    |
+| 8     | right_elbow     |       |                |
+
+## Retrieving a keypoint: `get_kp()`
+
+`get_kp()` looks up a keypoint by name and returns its `(x, y)` pixel coordinates, or `None` if the point is missing or unreliable:
+
+```python
+def get_kp(keypoints, name, conf_thresh=0.2):
+    idx = KP[name]
+    if idx >= len(keypoints):
+        return None
+    kp = keypoints[idx]
+    if len(kp) >= 3 and float(kp[2]) < conf_thresh:
+        return None
+    return (float(kp[0]), float(kp[1]))
+```
+
+The default confidence threshold is **0.2**. Any keypoint whose third column is below that value is treated as not detected — the function returns `None`, and every angle calculation that depends on it is skipped gracefully rather than producing a noisy result.
+
+<Note>
+  You can tighten the threshold by passing a higher `conf_thresh` value. A threshold of 0.5 reduces false angles at the cost of more `None` returns on partially visible joints.
+</Note>
+
+## Computing joint angles: `angle_between()`
+
+All form checks in GymGuard reduce to angles at a joint. `angle_between(a, b, c)` returns the angle at vertex `b` formed by the rays `b→a` and `b→c`:
+
+```python
+def angle_between(a, b, c):
+    if a is None or b is None or c is None:
+        return None
+    ba = np.array(a) - np.array(b)
+    bc = np.array(c) - np.array(b)
+    cosine = np.dot(ba, bc) / (np.linalg.norm(ba) * np.linalg.norm(bc) + 1e-6)
+    return math.degrees(math.acos(np.clip(cosine, -1.0, 1.0)))
+```
+
+A small epsilon (`1e-6`) prevents division by zero when two points coincide. `np.clip` guards against floating-point values just outside `[-1, 1]` that would cause `acos` to return `NaN`. The result is always in degrees.
+
+**Example — left knee angle:**
+
+```python
+lk_angle = angle_between(
+    kp("left_hip"),
+    kp("left_knee"),
+    kp("left_ankle")
+)
+```
+
+A fully extended knee returns roughly 180°. A deep squat returns values below 90°.
+
+## Multi-person tracking
+
+When YOLO detects more than one person in a frame, GymGuard selects the subject with the largest bounding box. This heuristic reliably locks onto the person closest to the camera — typically the person doing the workout:
+
+```python
+areas = []
+for box in boxes.xyxy:
+    w = float(box[2]) - float(box[0])
+    h = float(box[3]) - float(box[1])
+    areas.append(w * h)
+
+best_idx = areas.index(max(areas))
+return kps[best_idx].cpu().numpy()
+```
+
+If only one person is detected, that person's keypoints are returned directly without any area comparison. If YOLO finds no people, `run_inference()` returns `None` and the pipeline skips analysis for that frame.
+
+<Tip>
+  If GymGuard locks onto the wrong person — for example a training partner standing closer to the camera — step back so your bounding box is the largest in frame, or clear the background.
+</Tip>

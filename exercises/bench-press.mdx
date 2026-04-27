@@ -1,0 +1,74 @@
+---
+title: "Bench press: elbow flare angle rules and detection"
+description: "GymGuard measures the hip-shoulder-elbow angle on each side during bench press and flags elbow flare when either arm exceeds 80 degrees of abduction."
+---
+
+When GymGuard detects a bench press, it activates `bench.analyze()` to measure how far your elbows are flaring away from your torso. The analyzer calculates the angle between your hip, shoulder, and elbow on each side — a proxy for elbow abduction. Flaring the elbows too wide places excessive stress on the rotator cuff and anterior shoulder capsule, increasing the risk of tears under load.
+
+## How bench press detection works
+
+GymGuard classifies your pose as a bench press when your hips are above your shoulders in the camera frame — indicating you are lying on a bench with the camera oriented toward you. A 12-frame rolling buffer prevents brief postural shifts from misclassifying the exercise.
+
+## Joint angles tracked
+
+| Angle name | Keypoints used | Stored as |
+|---|---|---|
+| Left elbow flare | left_hip → left_shoulder → left_elbow | `L_flare` |
+| Right elbow flare | right_hip → right_shoulder → right_elbow | `R_flare` |
+
+The flare angle represents how far your elbow moves away from your body relative to your shoulder. An angle of 0° would mean the elbow is tucked directly to your side; larger angles mean the elbow is flaring wider.
+
+```python
+l_flare = angle_between(lh, ls, le)
+r_flare = angle_between(rh, rs, re)
+```
+
+## Form issues detected
+
+### Elbow flare
+
+| Issue | Trigger condition | Message |
+|---|---|---|
+| Left Elbow Flare | `L_flare > 80°` | Left elbow too wide - rotator cuff risk |
+| Right Elbow Flare | `R_flare > 80°` | Right elbow too wide - rotator cuff risk |
+
+```python
+if l_flare and l_flare > 80:
+    issues.append({
+        "name": "Left Elbow Flare",
+        "severity": round(min(1.0, (l_flare - 80) / 40), 2),
+        "message": "Left elbow too wide - rotator cuff risk"
+    })
+if r_flare and r_flare > 80:
+    issues.append({
+        "name": "Right Elbow Flare",
+        "severity": round(min(1.0, (r_flare - 80) / 40), 2),
+        "message": "Right elbow too wide - rotator cuff risk"
+    })
+```
+
+**Severity formula:** `min(1.0, (flare_angle - 80) / 40)` — severity reaches 1.0 when your elbow flare angle hits 120°, which represents extreme abduction well past a safe range.
+
+<Warning>
+Elbow flare under a loaded bar places the shoulder in a vulnerable externally rotated and abducted position. This is a known mechanism for rotator cuff tears and anterior labral injuries. If you see this flagged at HIGH RISK, reduce the weight and consciously tuck your elbows to roughly 45–75° of abduction.
+</Warning>
+
+## Good form vs. flagged form
+
+| What GymGuard sees | State |
+|---|---|
+| Flare angle ≤ 80° | No flag — elbow angle within safe range |
+| Flare angle 80–120° | Elbow Flare flagged — severity scales with abduction |
+| Flare angle ≥ 120° | Severity 1.0 — maximum flare risk |
+
+## Elbow angle asymmetry
+
+GymGuard checks left and right independently, so it can catch unilateral issues — for example, a right elbow flaring while the left stays tucked. Both sides are stored in the `angles` dict and displayed on the dashboard so you can compare them between sets.
+
+<Note>
+The ideal elbow angle for bench press depends on your goal and grip width. A competition powerlifting setup may use a 45° tuck; a hypertrophy-focused setup often allows slightly more flare. GymGuard's 80° threshold is a conservative safety boundary suited to most training styles.
+</Note>
+
+<Tip>
+Think about "bending the bar" or "screwing your hands into the bar" before you unrack. This external rotation cue naturally positions the elbows at a safe angle and engages the lats, which stabilize the shoulder through the press.
+</Tip>

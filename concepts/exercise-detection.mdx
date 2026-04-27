@@ -1,0 +1,99 @@
+---
+title: "How GymGuard detects your exercise"
+description: "GymGuard identifies your exercise via MLPClassifier or geometry-based heuristics, smoothing predictions over a 12-frame rolling buffer for stable detection."
+---
+
+Before GymGuard can check your form, it needs to know what exercise you are doing. It uses two strategies in priority order: an ML classifier when a trained model is present, and a set of geometry-based heuristic rules when it is not. Both paths feed into a rolling prediction buffer so a single unusual frame cannot flip the detected exercise mid-set.
+
+## ML mode: normalized keypoints → MLPClassifier
+
+When `models/exercise_classifier.pkl` and `models/label_encoder.pkl` exist on disk, GymGuard loads them at startup and uses them for every frame. The classifier expects 34 input features — the `x` and `y` coordinates of all 17 keypoints, each divided by the frame dimensions to make the input resolution-independent:
+
+```python
+flat = []
+for k in keypoints_raw:
+    flat.append(float(k[0]) / 640)
+    flat.append(float(k[1]) / 480)
+
+proba      = _clf.predict_proba([flat])[0]
+confidence = proba.max()
+predicted  = _le.classes_[proba.argmax()]
+```
+
+The classifier returns a probability for each of the seven supported exercises. GymGuard only accepts the prediction if the top class probability exceeds **0.6**. Frames where the model is uncertain (confidence ≤ 0.6) are silently dropped from the buffer rather than injecting a low-quality label.
+
+<Note>
+  The README reports 98% classifier accuracy on self-recorded training data. Accuracy on your own body proportions and camera angle improves significantly if you train on your own recordings using `tools/train_classifier.py`.
+</Note>
+
+## Heuristic fallback rules
+
+When no trained model is found, `detect_exercise()` uses a decision tree of joint-angle thresholds derived from `analyze_posture()`:
+
+| Condition | Detected exercise |
+|---|---|
+| Hip Y-coordinate above shoulder Y-coordinate | Bench Press |
+| Average knee angle < 120° | Squat |
+| Average knee angle 120°–154° | Lunge |
+| Spine angle < 140° and average knee angle ≥ 140° | Deadlift |
+| Wrists above shoulders and average elbow angle < 130° | Overhead Press |
+| Average elbow angle < 100° and wrists not high | Bicep Curl |
+| None of the above | Standing |
+
+```python
+if hip_above_shoulder:
+    predicted = "Bench Press"
+elif avg_knee and avg_knee < 120:
+    predicted = "Squat"
+elif avg_knee and 120 <= avg_knee < 155:
+    predicted = "Lunge"
+elif spine_angle and spine_angle < 140 and avg_knee and avg_knee >= 140:
+    predicted = "Deadlift"
+elif wrists_high and avg_elbow and avg_elbow < 130:
+    predicted = "Overhead Press"
+elif avg_elbow and avg_elbow < 100 and not wrists_high:
+    predicted = "Bicep Curl"
+else:
+    predicted = "Standing"
+```
+
+<Tip>
+  The heuristics work best from a side-on camera angle where joint positions are unambiguous. A front-facing camera makes the spine and knee angles less reliable.
+</Tip>
+
+## Rolling prediction buffer
+
+Whether the ML model or the heuristics produced a label, the prediction is appended to a fixed-size buffer before any exercise-specific form analysis runs:
+
+```python
+_BUFFER_SIZE = 12
+
+_exercise_buffer.append(predicted)
+
+if len(_exercise_buffer) > _BUFFER_SIZE:
+    _exercise_buffer.pop(0)
+
+if _exercise_buffer:
+    return max(set(_exercise_buffer), key=_exercise_buffer.count)
+```
+
+The buffer holds the last 12 accepted predictions. The function returns whichever label appears most often in that window. This means GymGuard needs to see a new exercise in the majority of recent frames before it switches — preventing a brief squat pause from being misclassified as "Standing" mid-set.
+
+## `detect_exercise()` call signature
+
+`detect_exercise()` is called from `analyze_posture()` after the shared joint angles are computed:
+
+```python
+def detect_exercise(kp, keypoints_raw, spine_angle, avg_knee, avg_elbow, wrists_high, hip_above_shoulder):
+    ...
+```
+
+| Parameter | Type | Description |
+|---|---|---|
+| `kp` | callable | `kp(name)` returns `(x, y)` for a named keypoint |
+| `keypoints_raw` | ndarray | Raw `(17, 3)` keypoint array for ML normalization |
+| `spine_angle` | float or None | Angle at the hip between shoulder and knee |
+| `avg_knee` | float or None | Mean of left and right knee angles |
+| `avg_elbow` | float or None | Mean of left and right elbow angles |
+| `wrists_high` | bool | True if either wrist is above its shoulder |
+| `hip_above_shoulder` | bool | True if average hip Y is less than average shoulder Y |

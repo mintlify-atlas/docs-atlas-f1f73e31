@@ -1,0 +1,73 @@
+---
+title: "Choosing and swapping YOLOv8 models"
+description: "Pick the right YOLOv8-Pose model size for your GPU. One line change in detector.py trades speed for accuracy across five model variants."
+---
+
+GymGuard ships with `yolov8m-pose.pt` as its default model — a balanced choice that delivers great accuracy at around 20-25 FPS on an RTX 3050. If your GPU is weaker or stronger, swapping to a different model size takes a single line change and gives you meaningful gains in either speed or accuracy.
+
+## Where to change the model
+
+Open `pose/detector.py`. The model is loaded on line 10:
+
+```python
+model = YOLO("yolov8m-pose.pt")
+```
+
+Replace the filename string with any of the five YOLOv8-Pose variants listed below. That is the only change you need to make.
+
+## Model comparison
+
+| Model | Speed | Accuracy | Best For |
+|---|---|---|---|
+| `yolov8n-pose.pt` | Fastest | Good | CPU / weak GPU |
+| `yolov8s-pose.pt` | Fast | Better | GTX 1060 class |
+| `yolov8m-pose.pt` | Balanced | Great | RTX 3050 (default) |
+| `yolov8l-pose.pt` | Slow | Best | RTX 3080+ |
+| `yolov8x-pose.pt` | Slowest | Maximum | RTX 4090 |
+
+<Tip>
+  `yolov8m-pose.pt` is the recommended default. It hits the best balance of speed and accuracy for mid-range NVIDIA hardware (RTX 3050 and similar).
+</Tip>
+
+## How to swap models
+
+<Steps>
+  <Step title="Open detector.py">
+    Navigate to `pose/detector.py` in the project root.
+  </Step>
+  <Step title="Change the model filename">
+    Replace `yolov8m-pose.pt` with your chosen model:
+
+    ```diff
+    - model = YOLO("yolov8m-pose.pt")
+    + model = YOLO("yolov8n-pose.pt")
+    ```
+
+  </Step>
+  <Step title="Restart the server">
+    Stop and restart GymGuard. The new model will be loaded on startup.
+
+    ```bash
+    python main.py
+    ```
+
+  </Step>
+</Steps>
+
+## Hardware recommendations
+
+| Hardware | Recommended Model |
+|---|---|
+| CPU only / Intel integrated | `yolov8n-pose.pt` |
+| NVIDIA GTX 1060 class | `yolov8s-pose.pt` |
+| NVIDIA RTX 3050 / 3060 | `yolov8m-pose.pt` |
+| NVIDIA RTX 3080+ | `yolov8l-pose.pt` |
+| NVIDIA RTX 4090 | `yolov8x-pose.pt` |
+
+## Automatic download on first use
+
+You do not need to manually download model weights. Ultralytics downloads the selected `.pt` file automatically the first time you run the server. The default `yolov8m-pose.pt` is approximately 50 MB. Larger models like `yolov8x-pose.pt` are proportionally bigger and take longer to download on first launch.
+
+<Note>
+  GymGuard automatically detects whether a CUDA-capable GPU is available and runs inference on GPU when possible. If no NVIDIA GPU is found, it falls back to CPU. The model you choose still applies — lighter models like `yolov8n-pose.pt` will perform better on CPU than heavier ones.
+</Note>

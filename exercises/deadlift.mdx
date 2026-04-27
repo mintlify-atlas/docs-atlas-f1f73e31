@@ -1,0 +1,87 @@
+---
+title: "Deadlift: spine rounding and bar drift detection rules"
+description: "GymGuard monitors your deadlift for spine rounding below 130 degrees and bar drift when your wrist moves more than 40 px away from your hip."
+---
+
+When GymGuard detects a deadlift, it activates `deadlift.analyze()` with your live spine angle passed in from the shared posture pipeline. The analyzer watches for two issues that together account for most serious deadlift injuries: rounding of the lower and mid back (spine rounding) and the bar drifting away from your body (bar drift), which multiplies the lever arm acting on your lumbar spine.
+
+## How deadlift detection works
+
+GymGuard classifies your pose as a deadlift when your spine angle (shoulder–hip–knee) is below 140° — indicating a forward hinge — while your knee angle remains at or above 140°, distinguishing the hip-dominant deadlift hinge from the knee-dominant squat. A 12-frame rolling buffer smooths the label over brief transitions.
+
+## Joint angles and positions tracked
+
+| Measurement | Keypoints used | Stored as |
+|---|---|---|
+| Spine angle | left_shoulder → left_hip → left_knee (or right side) | `spine` |
+| Bar drift | left_wrist x vs. left_hip x | — (issue flag only) |
+
+The spine angle is calculated in `base.py` and passed directly to `deadlift.analyze()`:
+
+```python
+spine_angle = (angle_between(kp("left_shoulder"),  kp("left_hip"),  kp("left_knee")) or
+               angle_between(kp("right_shoulder"), kp("right_hip"), kp("right_knee")))
+```
+
+## Form issues detected
+
+### Spine rounding
+
+| Issue | Trigger condition | Message |
+|---|---|---|
+| Spine Rounding | `spine_angle < 130°` | Back rounding - serious lower back injury risk |
+
+```python
+if spine_angle is not None and spine_angle < 130:
+    issues.append({
+        "name": "Spine Rounding",
+        "severity": round(min(1.0, (130 - spine_angle) / 60), 2),
+        "message": "Back rounding - serious lower back injury risk"
+    })
+```
+
+**Severity formula:** `min(1.0, (130 - spine_angle) / 60)` — severity reaches 1.0 when your spine angle drops to 70° (severely rounded back).
+
+<Warning>
+Spine rounding under a loaded bar is one of the highest-risk form faults in strength training. Disc herniation and lumbar muscle tears are both associated with sustained forward flexion under load. If GymGuard flags this, set the bar down and reset your brace before pulling again.
+</Warning>
+
+### Bar drift
+
+| Issue | Trigger condition | Message |
+|---|---|---|
+| Bar Drift | `left_wrist.x - left_hip.x > 40` px | Bar drifting away from body - increases lower back load |
+
+GymGuard uses the horizontal distance between your left wrist and left hip as a proxy for how far the bar is tracking away from your center of mass. A 40 px threshold accounts for natural variation in camera angle and body proportion.
+
+```python
+lw = kp("left_wrist")
+lh = kp("left_hip")
+if lw and lh and lw[0] - lh[0] > 40:
+    issues.append({
+        "name": "Bar Drift",
+        "severity": round(min(1.0, (lw[0] - lh[0] - 40) / 80), 2),
+        "message": "Bar drifting away from body - increases lower back load"
+    })
+```
+
+**Severity formula:** `min(1.0, (wrist_x - hip_x - 40) / 80)` — severity reaches 1.0 when your wrist is 120 px outboard of your hip.
+
+## Good form vs. flagged form
+
+| What GymGuard sees | State |
+|---|---|
+| Spine angle ≥ 130° | No flag — back position acceptable |
+| Spine angle 70–129° | Spine Rounding flagged — severity scales with rounding |
+| Spine angle < 70° | Severity 1.0 — severely rounded back |
+| Wrist within 40 px of hip x | No flag — bar tracking close to body |
+| Wrist 40–120 px from hip x | Bar Drift flagged — severity scales with distance |
+| Wrist 120+ px from hip x | Severity 1.0 — significant bar drift |
+
+<Note>
+A neutral spine in the deadlift does not mean a perfectly vertical torso. At the setup position your torso should be angled forward with the spine in its natural S-curve — chest tall, lower back not flexed. GymGuard's 130° threshold allows for a proper hinge angle while still catching dangerous rounding.
+</Note>
+
+<Tip>
+To keep the bar close to your body, drag it up your shins and thighs throughout the pull. Engage your lats before you pull by thinking about "protecting your armpits" — this cue naturally keeps the bar from drifting forward.
+</Tip>

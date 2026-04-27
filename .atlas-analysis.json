@@ -1,0 +1,94 @@
+{
+  "projectType": "ai-ml",
+  "projectName": "GymGuard",
+  "projectDescription": "GPU-accelerated real-time AI fitness coach that tracks 17 body keypoints via YOLOv8 to detect bad exercise form and score injury risk 0–100 using your webcam.",
+  "theme": "palm",
+  "primaryColor": "#94cb04",
+  "lightColor": "#545454",
+  "darkColor": null,
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "hardware-requirements"
+            ]
+          },
+          {
+            "group": "How It Works",
+            "pages": [
+              "concepts/pipeline",
+              "concepts/pose-estimation",
+              "concepts/exercise-detection",
+              "concepts/risk-scoring"
+            ]
+          },
+          {
+            "group": "Exercises",
+            "pages": [
+              "exercises/overview",
+              "exercises/squat",
+              "exercises/deadlift",
+              "exercises/bench-press",
+              "exercises/lunge",
+              "exercises/bicep-curl",
+              "exercises/overhead-press"
+            ]
+          },
+          {
+            "group": "Configuration & Customization",
+            "pages": [
+              "configuration/model-selection",
+              "configuration/voice-alerts",
+              "configuration/video-upload"
+            ]
+          },
+          {
+            "group": "Training Your Own Classifier",
+            "pages": [
+              "training/overview",
+              "training/data-collection",
+              "training/train-and-evaluate"
+            ]
+          },
+          {
+            "group": "API Reference",
+            "pages": [
+              "api/websocket",
+              "api/endpoints"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Real-time 17-keypoint pose estimation at 20+ FPS on NVIDIA GPU via YOLOv8m-Pose",
+    "ML-based exercise auto-detection (98% accuracy across 7 exercises) using MLPClassifier",
+    "Live injury risk scoring from 0–100 based on joint angles and posture rules",
+    "Exercise-specific form analysis with dedicated rules per exercise",
+    "Voice alerts via native Web Speech API — no external libraries required",
+    "Multi-person tracking with automatic focus on the largest detected person",
+    "Video upload mode for post-workout analysis",
+    "Session history chart with 60-second scrolling risk graph and CSV export",
+    "Hardware-adaptive: NVIDIA GPU recommended, falls back to CPU automatically"
+  ],
+  "publicApiSurface": [
+    "WebSocket /ws — live webcam pose stream returning frame, analysis, and timestamp",
+    "POST /analyze-image — single image pose analysis returning annotated frame + analysis",
+    "POST /analyze-video — full video analysis returning NDJSON stream of frame + analysis per processed frame",
+    "GET / — serves the frontend dashboard (index.html)",
+    "run_inference(frame) — YOLOv8 inference returning keypoints array for largest detected person",
+    "analyze_posture(keypoints) — returns issues, angles, risk_score, exercise_detected",
+    "draw_skeleton(frame, keypoints, risk_score) — draws annotated skeleton overlay on frame",
+    "angle_between(a, b, c) — computes joint angle in degrees from three (x,y) points",
+    "tools/collect_data.py — webcam keypoint data collector for classifier training",
+    "tools/extract_from_videos.py — bulk keypoint extractor from video files",
+    "tools/train_classifier.py — trains and saves exercise MLPClassifier"
+  ]
+}

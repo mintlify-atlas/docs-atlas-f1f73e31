@@ -1,0 +1,133 @@
+---
+title: "Training and evaluating the exercise classifier"
+description: "Run the training script to fit an MLPClassifier on your keypoint data, read the accuracy report, and deploy the saved model to GymGuard."
+---
+
+Once you have collected keypoint data for all seven exercise classes, you are ready to train the classifier. The training script reads `data/keypoints.csv`, fits a two-layer neural network using scikit-learn's `MLPClassifier`, evaluates it on a held-out 20% test set, and saves the trained model and label encoder to `models/`. The whole process typically completes in under a minute on a modern CPU.
+
+## Run the training script
+
+```bash
+python tools/train_classifier.py
+```
+
+The script prints a sample count per exercise at the start so you can verify your dataset before training begins:
+
+```
+Loading data...
+Total samples: 2450
+Per exercise:
+Squat              352
+Deadlift           341
+Bench Press        348
+Lunge              355
+Bicep Curl         338
+Overhead Press     360
+Standing           356
+```
+
+## Model configuration
+
+The classifier is an `MLPClassifier` with two hidden layers. These are the exact parameters used in `train_classifier.py`:
+
+```python
+clf = MLPClassifier(
+    hidden_layer_sizes=(128, 64),
+    activation="relu",
+    max_iter=500,
+    random_state=42,
+    verbose=True,
+    early_stopping=True,
+    validation_fraction=0.1,
+)
+```
+
+| Parameter | Value | Effect |
+|---|---|---|
+| `hidden_layer_sizes` | `(128, 64)` | Two hidden layers with 128 and 64 neurons |
+| `activation` | `"relu"` | ReLU nonlinearity between layers |
+| `max_iter` | `500` | Maximum training epochs |
+| `early_stopping` | `True` | Halts training when validation loss stops improving |
+| `validation_fraction` | `0.1` | 10% of training data reserved for early stopping |
+
+## Train/test split
+
+The script uses an 80/20 stratified split, so each exercise class is proportionally represented in both sets:
+
+```python
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y_enc, test_size=0.2, random_state=42, stratify=y_enc
+)
+```
+
+## Evaluating the results
+
+After training, the script prints a full `classification_report` and a confusion matrix using the held-out 20% test set:
+
+```python
+print(classification_report(y_test, y_pred, target_names=le.classes_))
+
+cm = confusion_matrix(y_test, y_pred)
+print("Confusion Matrix:")
+print(pd.DataFrame(cm, index=le.classes_, columns=le.classes_))
+```
+
+A well-trained model typically reports per-class precision, recall, and F1-scores above 0.95. The final line shows overall accuracy:
+
+```
+Accuracy: 98.2%
+```
+
+Look at the confusion matrix to spot any classes that are being mis-classified into each other. A common source of confusion is Squat vs. Lunge because both involve deep knee bend — collecting more varied samples for those two classes resolves it.
+
+<Tip>
+Aim for an equal number of samples per exercise class. Class imbalance causes the model to favour the majority class and depresses accuracy for under-represented exercises. If one class has significantly fewer samples, collect more using `tools/collect_data.py` before retraining.
+</Tip>
+
+## Where the model is saved
+
+After training completes, two files are written to `models/`:
+
+| File | Contents |
+|---|---|
+| `models/exercise_classifier.pkl` | Fitted `MLPClassifier` |
+| `models/label_encoder.pkl` | `LabelEncoder` mapping class indices to exercise names |
+
+```python
+Path("models").mkdir(exist_ok=True)
+joblib.dump(clf, MODEL_FILE)
+joblib.dump(le,  LABEL_FILE)
+print(f"\nModel saved to {MODEL_FILE}")
+```
+
+## Deploying the model
+
+GymGuard loads the model automatically on startup. In `pose/analyzers/base.py`:
+
+```python
+if _MODEL_PATH.exists() and _LABEL_PATH.exists():
+    _clf = joblib.load(_MODEL_PATH)
+    _le  = joblib.load(_LABEL_PATH)
+    print("[INFO] Exercise classifier loaded")
+else:
+    print("[INFO] No classifier found - using heuristic detection")
+```
+
+## The confidence threshold
+
+At runtime, the classifier predicts a probability distribution across all seven classes. If the highest probability exceeds 0.6, GymGuard uses the ML prediction. If confidence is lower, the frame falls back to heuristic detection:
+
+```python
+proba      = _clf.predict_proba([flat])[0]
+confidence = proba.max()
+predicted  = _le.classes_[proba.argmax()]
+
+if confidence > 0.6:
+    _exercise_buffer.append(predicted)
+```
+
+This threshold prevents low-confidence guesses — for example during transitions between exercises — from triggering the wrong form analyzer.
+
+<Note>
+After saving the model files, restart GymGuard with `python main.py` for the new classifier to take effect. The terminal will show `[INFO] Exercise classifier loaded` to confirm the model is active.
+</Note>

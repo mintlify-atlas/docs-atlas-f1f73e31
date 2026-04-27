@@ -1,0 +1,167 @@
+---
+title: "WebSocket API: stream live pose analysis in real time"
+description: "Connect to ws://localhost:8000/ws to receive annotated webcam frames and pose analysis — exercise, risk score, issues, and angles — as JSON messages."
+---
+
+The WebSocket endpoint at `/ws` is the primary integration point for building on top of GymGuard. When you connect, the server opens your local webcam, runs YOLOv8 pose inference, and streams annotated frames alongside a full analysis object — exercise detection, injury risk score, joint angles, and active form issues — all in real time, at 20+ FPS on supported hardware.
+
+## Endpoint
+
+```
+ws://localhost:8000/ws
+```
+
+When a client connects, GymGuard:
+
+1. Opens the system default webcam (device index `0`) at 640×480, 30 FPS
+2. Captures frames continuously and runs pose inference on every second frame
+3. Draws the skeleton overlay on every frame using the most recent keypoints
+4. Sends each annotated frame as a JSON text message over the WebSocket connection
+
+<Note>
+Always connect through `http://localhost:8000`, not by opening `static/index.html` directly in your browser. The WebSocket path `/ws` is served by the FastAPI backend — opening the HTML file directly will break the connection.
+</Note>
+
+## Frame rate and inference cadence
+
+GymGuard captures at up to 30 FPS from the webcam. Pose inference runs on every second captured frame to balance accuracy and throughput. The annotated frame from the most recent successful inference is drawn on every frame before it is sent, so you receive a continuous stream without gaps.
+
+On an NVIDIA RTX 3050 or better, expect 20–25 messages per second. On CPU-only setups, throughput drops to 5–8 messages per second.
+
+## Server message format
+
+Each message is a JSON text frame with three top-level fields.
+
+```json
+{
+  "frame": "<base64-encoded JPEG string>",
+  "analysis": {
+    "exercise_detected": "Squat",
+    "risk_score": 42,
+    "issues": [
+      {
+        "name": "Left Knee Valgus",
+        "severity": 0.35,
+        "message": "Left knee caving inward - ACL/MCL strain risk"
+      }
+    ],
+    "angles": {
+      "spine": 142.3,
+      "left_knee": 95.1,
+      "right_knee": 97.4,
+      "neck_offset": -12.0
+    }
+  },
+  "ts": 1714220400.123
+}
+```
+
+<ResponseField name="frame" type="string" required>
+  A base64-encoded JPEG image of the current webcam frame with the skeleton overlay already drawn. Render it in an `<img>` tag with the prefix `data:image/jpeg;base64,`.
+</ResponseField>
+
+<ResponseField name="ts" type="number" required>
+  Unix timestamp (seconds with millisecond precision) recorded immediately before the message is sent.
+</ResponseField>
+
+<ResponseField name="analysis" type="object" required>
+  The posture analysis result for this frame.
+
+  <Expandable title="analysis fields">
+    <ResponseField name="exercise_detected" type="string" required>
+      The exercise GymGuard identified for this frame. Possible values include `"Squat"`, `"Deadlift"`, `"Bench Press"`, `"Lunge"`, `"Bicep Curl"`, `"Overhead Press"`, `"Standing"`, `"No person detected"`, and `"Detecting..."` during the warm-up period.
+    </ResponseField>
+
+    <ResponseField name="risk_score" type="integer" required>
+      Injury risk score from `0` (safe form) to `100` (stop immediately). Scores below 30 indicate good form, 30–64 indicate deviations worth addressing, and 65–100 signal high injury risk.
+    </ResponseField>
+
+    <ResponseField name="issues" type="array" required>
+      List of active form issues detected in this frame. Empty when form is correct or no person is detected.
+
+      <Expandable title="issue object fields">
+        <ResponseField name="name" type="string" required>
+          Short label for the issue, for example `"Left Knee Valgus"` or `"Forward Head Posture"`.
+        </ResponseField>
+        <ResponseField name="severity" type="number" required>
+          Severity of the issue on a scale from `0.0` to `1.0`. Used to compute `risk_score`.
+        </ResponseField>
+        <ResponseField name="message" type="string" required>
+          Human-readable description of the issue and the associated injury risk, for example `"Left knee caving inward - ACL/MCL strain risk"`.
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+
+    <ResponseField name="angles" type="object" required>
+      Dictionary of computed joint angles in degrees, keyed by joint name. Present keys depend on which joints are visible in the frame. Common keys include `spine`, `left_knee`, `right_knee`, and `neck_offset`. Values are rounded to one decimal place.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+## Error message format
+
+If the webcam cannot be opened, GymGuard sends one error message and immediately closes the connection.
+
+```json
+{ "error": "Camera not found" }
+```
+
+<ResponseField name="error" type="string">
+  A plain-text description of the error. After sending this message, the server closes the WebSocket connection.
+</ResponseField>
+
+<Warning>
+GymGuard always opens device index `0` — your system's default camera. If the webcam is in use by another application or not connected, you will receive the error message above and the connection will close.
+</Warning>
+
+## JavaScript connection example
+
+The following example mirrors how the built-in GymGuard dashboard connects to the stream.
+
+```javascript
+const ws = new WebSocket('ws://' + location.host + '/ws');
+
+ws.onopen = () => {
+  console.log('Connected to GymGuard pose stream');
+};
+
+ws.onmessage = (event) => {
+  const data = JSON.parse(event.data);
+
+  if (data.error) {
+    console.error('GymGuard error:', data.error);
+    ws.close();
+    return;
+  }
+
+  // Render the annotated frame
+  document.getElementById('feed').src = 'data:image/jpeg;base64,' + data.frame;
+
+  // Use the analysis object
+  const { exercise_detected, risk_score, issues, angles } = data.analysis;
+  console.log(`Exercise: ${exercise_detected}, Risk: ${risk_score}`);
+
+  if (issues.length > 0) {
+    issues.forEach(issue => {
+      console.warn(`${issue.name} (severity ${issue.severity}): ${issue.message}`);
+    });
+  }
+};
+
+ws.onclose = () => {
+  console.log('Connection closed');
+};
+
+ws.onerror = () => {
+  console.error('WebSocket error');
+};
+
+// Close the connection cleanly when done
+function stopStream() {
+  if (ws) ws.close();
+}
+```
+
+<Tip>
+To display the stream in an `<img>` element, set its `src` attribute to the base64 data URI on every message. The browser updates the image in place — no canvas or video element is required.
+</Tip>

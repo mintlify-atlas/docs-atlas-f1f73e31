@@ -1,0 +1,93 @@
+---
+title: "Squat: knee valgus and forward lean detection rules"
+description: "GymGuard tracks left and right knee valgus using pixel position and flags excessive forward lean when your spine angle drops below 145 degrees."
+---
+
+When GymGuard detects a squat, it activates `squat.analyze()` alongside the shared forward-lean check in `base.py`. The analyzer measures two things: whether your knees are caving inward relative to your ankles (knee valgus), and whether your torso is pitching too far forward (excessive forward lean). Both issues are linked to common squat injuries — ACL/MCL strain and lower-back overload respectively.
+
+## How squat detection works
+
+GymGuard classifies your pose as a squat when your average knee angle (hip–knee–ankle) falls below 120°. A rolling 12-frame buffer smooths the classification so brief transitions between standing and squatting do not cause flicker.
+
+## Joint angles tracked
+
+| Angle name | Keypoints used | Stored as |
+|---|---|---|
+| Left knee | left_hip → left_knee → left_ankle | `left_knee` |
+| Right knee | right_hip → right_knee → right_ankle | `right_knee` |
+| Spine | left_shoulder → left_hip → left_knee (or right side) | `spine` |
+
+```python
+lk_a = angle_between(kp("left_hip"),  kp("left_knee"),  kp("left_ankle"))
+rk_a = angle_between(kp("right_hip"), kp("right_knee"), kp("right_ankle"))
+```
+
+## Form issues detected
+
+### Knee valgus
+
+| Issue | Trigger condition | Message |
+|---|---|---|
+| Left Knee Valgus | `left_knee.x > left_ankle.x + 15` px | Left knee caving inward - ACL/MCL strain risk |
+| Right Knee Valgus | `right_knee.x < right_ankle.x - 15` px | Right knee caving inward - ACL/MCL strain risk |
+
+GymGuard compares the x-coordinate of each knee to the corresponding ankle. Because the camera sees the body from the front, a knee that tracks inward (valgus collapse) crosses inside the ankle's position. A 15 px tolerance prevents false positives from minor natural variation.
+
+```python
+if lk and la and lk[0] > la[0] + 15:
+    issues.append({
+        "name": "Left Knee Valgus",
+        "severity": round(min(1.0, (lk[0] - la[0] - 15) / 60), 2),
+        "message": "Left knee caving inward - ACL/MCL strain risk"
+    })
+if rk and ra and rk[0] < ra[0] - 15:
+    issues.append({
+        "name": "Right Knee Valgus",
+        "severity": round(min(1.0, (ra[0] - rk[0] - 15) / 60), 2),
+        "message": "Right knee caving inward - ACL/MCL strain risk"
+    })
+```
+
+**Severity formula:** `min(1.0, (offset - 15) / 60)` — severity reaches 1.0 when the knee has crossed 75 px past the ankle's inner edge.
+
+<Warning>
+A severity of 1.0 on knee valgus contributes directly to a HIGH RISK score (65+). Knee valgus under load is one of the primary mechanisms for ACL and MCL injuries. Stop, reduce weight, and focus on pushing your knees out over your pinky toes before continuing.
+</Warning>
+
+### Excessive forward lean
+
+This check runs in `base.py` immediately after `squat.analyze()` returns.
+
+| Issue | Trigger condition | Message |
+|---|---|---|
+| Excessive Forward Lean | `spine_angle < 145°` | Torso too far forward - lower back risk |
+
+```python
+if spine_angle and spine_angle < 145:
+    issues.append({
+        "name": "Excessive Forward Lean",
+        "severity": round(min(1.0, (145 - spine_angle) / 60), 2),
+        "message": "Torso too far forward - lower back risk"
+    })
+```
+
+**Severity formula:** `min(1.0, (145 - spine_angle) / 60)` — severity reaches 1.0 at a spine angle of 85° (near horizontal torso).
+
+## Good form vs. flagged form
+
+| What GymGuard sees | State |
+|---|---|
+| Knee x-position within 15 px of ankle | No flag — knees tracking correctly |
+| Knee x-position 15–75 px inside ankle | Partial severity — form degrading |
+| Knee x-position 75+ px inside ankle | Severity 1.0 — HIGH RISK |
+| Spine angle 145°+ | No flag — torso upright enough |
+| Spine angle 85–144° | Forward lean flagged — severity scales with depth |
+| Spine angle < 85° | Severity 1.0 — nearly horizontal torso |
+
+<Note>
+Ankle mobility is the most common cause of forward lean in squats. If your torso pitches forward before your hips reach parallel, try elevating your heels slightly or working on calf and ankle flexibility. Keeping your chest up and your gaze forward also helps maintain a neutral spine angle.
+</Note>
+
+<Tip>
+For knee valgus, consciously cue your knees to track over your pinky toes throughout the descent. Strengthening hip abductors (clamshells, banded walks) reduces collapse frequency over time.
+</Tip>

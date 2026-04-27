@@ -1,0 +1,85 @@
+---
+title: "Analyzing recorded workouts via video upload"
+description: "Upload a pre-recorded workout video to run GymGuard's full pose analysis offline. Get frame-by-frame risk scores, skeleton overlays, and issue detection."
+---
+
+GymGuard's video upload mode lets you analyze a recorded workout after the fact — no webcam required. You upload a video file, the server processes it frame by frame using the same YOLOv8-Pose pipeline as the live mode, and the results stream back to your browser with skeleton overlays and a live-updating issues panel.
+
+<Note>
+  Video upload is designed for post-workout review, not real-time coaching. For live feedback during a session, use the webcam mode instead.
+</Note>
+
+## How to upload a video
+
+<Steps>
+  <Step title="Open the GymGuard dashboard">
+    Navigate to `http://localhost:8000` in your browser.
+  </Step>
+  <Step title="Select your video file">
+    Click the video upload button on the dashboard. A file picker will open. Select your recorded workout video.
+  </Step>
+  <Step title="Wait for analysis to complete">
+    The status indicator changes to **VIDEO MODE** and a progress counter appears, showing how many frames have been processed. The video feed area displays each analyzed frame with the skeleton overlay rendered in real time as results stream in.
+  </Step>
+  <Step title="Review the results">
+    As frames are processed, the risk gauge, issues panel, and joint angles panel update with each frame's analysis — the same panels you see in live mode. When processing finishes, the status changes to **VIDEO DONE**.
+  </Step>
+</Steps>
+
+## How it works internally
+
+When you submit a video, the browser sends it via `POST /analyze-video`. The server saves the file to a temporary path using the original file extension to preserve format compatibility:
+
+```python
+suffix = Path(file.filename).suffix or ".mp4"
+tmp    = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+```
+
+OpenCV then opens the temporary file and reads it frame by frame. To keep processing fast without overloading the server, only every 3rd frame is analyzed:
+
+```python
+frame_idx += 1
+if frame_idx % 3 != 0:   # process every 3rd frame
+    continue
+```
+
+Each analyzed frame is passed through the same `run_inference` and `analyze_posture` pipeline used in live mode. The result — a JPEG-encoded frame with the skeleton overlay and the analysis object — is encoded as a JSON line and streamed back to the browser:
+
+```python
+payload = json.dumps({"frame": frame_b64, "analysis": analysis}) + "\n"
+yield payload.encode("utf-8")
+```
+
+The browser reads this NDJSON (newline-delimited JSON) stream incrementally using the Fetch API's `ReadableStream`, updating the UI as each line arrives.
+
+## What you see during analysis
+
+| UI element | What it shows |
+|---|---|
+| Video feed | Each processed frame with the skeleton overlay drawn on it |
+| Risk gauge | The risk score (0–100) for that frame |
+| Issues panel | Form issues detected in that frame |
+| Joint angles | Key angle measurements for that frame |
+| Progress counter | Running count of frames processed so far |
+
+## Supported file formats
+
+GymGuard uses OpenCV (`cv2.VideoCapture`) to read uploaded videos. OpenCV supports a wide range of container formats on most systems, including:
+
+- `.mp4` (H.264, H.265)
+- `.mov` (QuickTime)
+- `.avi`
+- `.mkv`
+- `.webm`
+
+The server detects the format from the uploaded filename's extension (`Path(file.filename).suffix`). If no extension is detected, it defaults to `.mp4`.
+
+<Note>
+  The specific formats available depend on the codecs installed on your server's operating system. If a video fails to open, re-encode it to H.264 MP4 using a tool like HandBrake or FFmpeg.
+</Note>
+
+## Performance notes
+
+Processing speed depends on your hardware and the chosen YOLOv8 model. Because only every 3rd frame is analyzed, a 30 FPS video is effectively processed at 10 analysis frames per second of footage. On an RTX 3050, expect processing to take roughly the same wall-clock time as the video's duration. Lighter models like `yolov8n-pose.pt` will process faster; heavier ones like `yolov8l-pose.pt` will be slower but more accurate.
+
+After processing completes, the temporary file is automatically deleted from the server.

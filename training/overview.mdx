@@ -1,0 +1,70 @@
+---
+title: "Training a custom exercise classifier"
+description: "Train your own ML classifier on self-recorded data to reach 98% exercise detection accuracy, instead of relying on approximate angle-based heuristics."
+---
+
+GymGuard detects which exercise you are performing using one of two modes: an ML classifier you train on your own recorded data, or a heuristic fallback that estimates the exercise from joint angles alone. The ML classifier reaches 98% accuracy across all seven exercise classes. The heuristic fallback works without any training but uses angle thresholds that can mis-classify similar movements — for example, confusing a lunge with a partial squat. Training your own classifier takes about 30 minutes and permanently improves detection accuracy for your body proportions and camera setup.
+
+## Two detection modes
+
+When GymGuard starts, `pose/analyzers/base.py` checks whether a trained model exists at `models/exercise_classifier.pkl`. If the file is present, the ML classifier runs and you will see `[INFO] Exercise classifier loaded` in the terminal. If the file is absent, GymGuard falls back to heuristics automatically with `[INFO] No classifier found - using heuristic detection`.
+
+| Mode | How it works | Accuracy |
+|---|---|---|
+| ML classifier | MLPClassifier predicts exercise from 34 normalized keypoint values | ~98% |
+| Heuristic fallback | Angle thresholds on knee, spine, elbow, and wrist position | Approximate |
+
+## Supported exercise classes
+
+The classifier is trained on seven classes. Each class maps directly to an exercise-specific form analyzer.
+
+| Folder | Label | What GymGuard checks |
+|---|---|---|
+| `squat` | Squat | Knee valgus, excessive forward lean |
+| `deadlift` | Deadlift | Spine rounding, bar drift |
+| `bench` | Bench Press | Elbow flare (left and right) |
+| `lunge` | Lunge | Knee over toe, torso lean |
+| `curl` | Bicep Curl | Body swing, cheat reps |
+| `overhead` | Overhead Press | Lumbar hyperextension |
+| `standing` | Standing | General posture, forward head posture |
+
+## The three-step training workflow
+
+<Steps>
+  <Step title="Collect data">
+    Record 1–2 minutes of each exercise from a side view, or use the live webcam collector to capture keypoint samples directly. Both methods write normalized keypoints to `data/keypoints.csv`.
+
+    See [Collecting training data](/training/data-collection) for full instructions.
+  </Step>
+  <Step title="Extract keypoints from videos">
+    If you recorded video files, run the extractor to process every video in `data/videos/` and write keypoint rows to `data/keypoints.csv`. The extractor samples one frame every 10 frames to avoid near-duplicate samples.
+
+    ```bash
+    python tools/extract_from_videos.py
+    ```
+  </Step>
+  <Step title="Train and evaluate">
+    Run the training script to fit an MLPClassifier on your keypoint data, evaluate it on a held-out 20% test set, and save the model to `models/`.
+
+    ```bash
+    python tools/train_classifier.py
+    ```
+
+    See [Training and evaluating the classifier](/training/train-and-evaluate) for details on the model config and expected output.
+  </Step>
+</Steps>
+
+<Tip>
+Record at least 1–2 minutes of each exercise from a consistent side view. At 30 FPS with a frame skip of 10, that gives you roughly 180–360 keypoint samples per exercise — enough for the classifier to generalize well.
+</Tip>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Collecting training data" icon="video" href="/training/data-collection">
+    Record videos or use the live webcam collector to build your keypoint dataset
+  </Card>
+  <Card title="Training and evaluating" icon="brain" href="/training/train-and-evaluate">
+    Run the training script, read the classification report, and deploy your model
+  </Card>
+</CardGroup>

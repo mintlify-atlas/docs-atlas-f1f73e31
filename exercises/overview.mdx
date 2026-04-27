@@ -1,0 +1,85 @@
+---
+title: "Supported exercises and form rules GymGuard enforces"
+description: "GymGuard automatically detects and analyzes 7 exercises — squat, deadlift, bench press, lunge, bicep curl, overhead press, and standing posture."
+---
+
+GymGuard monitors seven exercises without requiring you to select anything manually. The moment you step in front of your webcam, the ML classifier reads your body position and routes your live feed to the correct form analyzer. Each analyzer tracks specific joint angles and spatial relationships, then flags deviations before they become injuries.
+
+## Exercises at a glance
+
+| Exercise | What GymGuard checks | Page |
+|---|---|---|
+| Squat | Knee valgus (left and right), excessive forward lean | [Squat](/exercises/squat) |
+| Deadlift | Spine rounding, bar drift away from body | [Deadlift](/exercises/deadlift) |
+| Bench Press | Elbow flare (left and right) | [Bench Press](/exercises/bench-press) |
+| Lunge | Knee over toe (left and right), torso lean | [Lunge](/exercises/lunge) |
+| Bicep Curl | Body swing / momentum cheat reps | [Bicep Curl](/exercises/bicep-curl) |
+| Overhead Press | Lumbar hyperextension | [Overhead Press](/exercises/overhead-press) |
+| Standing | Forward head posture, slouched spine | — |
+
+<CardGroup cols={2}>
+  <Card title="Squat" icon="person-falling" href="/exercises/squat">
+    Knee valgus detection and forward lean monitoring per rep
+  </Card>
+  <Card title="Deadlift" icon="weight-hanging" href="/exercises/deadlift">
+    Spine rounding and bar path tracking to protect your lower back
+  </Card>
+  <Card title="Bench Press" icon="dumbbell" href="/exercises/bench-press">
+    Elbow flare angle analysis to reduce rotator cuff risk
+  </Card>
+  <Card title="Lunge" icon="person-walking" href="/exercises/lunge">
+    Knee-over-toe and torso lean checks for patellar tendon safety
+  </Card>
+  <Card title="Bicep Curl" icon="hand-fist" href="/exercises/bicep-curl">
+    Body swing detection to ensure bicep isolation on every rep
+  </Card>
+  <Card title="Overhead Press" icon="arrow-up" href="/exercises/overhead-press">
+    Lumbar hyperextension guard to protect spinal discs under load
+  </Card>
+</CardGroup>
+
+## How exercise detection works
+
+GymGuard detects your exercise automatically on every frame — you never select it manually.
+
+When a trained ML classifier is present (`models/exercise_classifier.pkl`), GymGuard normalizes your 17 body keypoints to a 34-number vector and runs inference. If the classifier confidence exceeds 60%, that prediction is recorded. Results are smoothed over a rolling 12-frame buffer, and the most frequent label in that window becomes the active exercise.
+
+When no classifier model is found, GymGuard falls back to heuristic detection using joint angles:
+
+| Condition | Detected as |
+|---|---|
+| Hip above shoulder | Bench Press |
+| Average knee angle < 120° | Squat |
+| Average knee angle 120–154° | Lunge |
+| Spine angle < 140° and knee angle ≥ 140° | Deadlift |
+| Wrists above shoulders and elbow angle < 130° | Overhead Press |
+| Elbow angle < 100° and wrists not high | Bicep Curl |
+| None of the above | Standing |
+
+<Note>
+The ML classifier reports 98% accuracy across all 7 exercises when trained on your own recorded data. If you are using heuristic fallback mode, detection is less precise at the transitions between exercises — for example, the bottom of a squat and a lunge can overlap. See [Training Your Own Classifier](/training/overview) to build the model.
+</Note>
+
+## Shared form checks
+
+Two form checks run on every frame regardless of which exercise is active:
+
+**Forward Head Posture** — triggered when your nose x-position deviates more than 45 px from the midpoint of your shoulders. Severity scales up to 1.0 at 125 px of offset.
+
+**Excessive Forward Lean** — applied during squats when your spine angle (shoulder–hip–knee) drops below 145°. Severity scales up to 1.0 at 85° of offset.
+
+**Slouched Posture** — applied during standing when your spine angle drops below 155°. Severity scales up to 1.0 at 105°.
+
+## Risk score
+
+Every frame, GymGuard combines the issues it detects into a single 0–100 risk score:
+
+```
+risk_score = min(100, max(severity) × 70 + len(issues) × 10)
+```
+
+| Score | Level | What it means |
+|---|---|---|
+| 0–29 | SAFE | Good form — keep going |
+| 30–64 | WARNING | Deviations detected — reduce load |
+| 65–100 | HIGH RISK | Stop and correct immediately |
